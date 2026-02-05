@@ -3,6 +3,8 @@
 This service exists so automated agents and humans can coordinate missions via four primary actions.
 Base URL: `http://localhost:18081` (use `PORT` from `.env` if overridden).
 
+For non-OpenCode agents, also review `AGENTS.md` for local tooling and workflow rules.
+
 1. **Plan** – call `POST /v1/plan` before work starts for every session, passing the human-readable project name and an ordered list of objectives/steps.
 2. **Status** – call `POST /v1/log` continually with concise updates (`level` + `message`). These become the shared running log and should describe observable progress, preliminary results, blockers, or errors.
 3. **Ask** – call `POST /v1/ask` whenever a decision requires a human. Supply the `question` and all available `options`. The handler waits for a response (or times out) and returns the chosen option.

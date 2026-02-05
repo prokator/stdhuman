@@ -8,8 +8,8 @@ Minimal FastAPI service exposing the StdHuman planning/logging/decision endpoint
 2. Set up the repo on the host (clone, pull, or sync as needed).
 3. Add `.env` with the bot token and `DEV_TELEGRAM_USERNAME` (see [Setup](#setup)).
 4. Run `get_code.sh` or `get_code.bat` to mint the start code (see [Setup](#setup)).
-5. Send `/start <code>` to authorize and create `.telegram_user_id` (see [Setup](#setup)).
-6. Start Docker with `docker compose up --build -d` (see [Setup](#setup)).
+5. Start Docker with `docker compose up --build -d` (see [Setup](#setup)).
+6. Send `/start <code>` to the bot in Telegram (not the CLI) so the running service can capture `.telegram_user_id` (see [Setup](#setup)).
 
 ## Setup
 
@@ -39,12 +39,12 @@ The deployment flow is strict and ordered: configure `.env`, generate a start co
    ```powershell
    get_code.bat
    ```
-   Then send `/start <code>` to your bot in Telegram. This creates `.telegram_user_id` locally.
-
-4. Start Docker only after the start code is generated:
+4. Start Docker so the service can receive Telegram updates:
    ```bash
    docker compose up --build -d
    ```
+
+5. Then send `/start <code>` to your bot in Telegram (not the CLI). This creates `.telegram_user_id` locally.
 
 ## Running the API
 
@@ -190,5 +190,5 @@ When onboarding a new Telegram bot, follow this sequence before you touch Docker
 1. Create a bot in BotFather and copy the token.
 2. Set `TELEGRAM_BOT_TOKEN` and `DEV_TELEGRAM_USERNAME` in `.env`.
 3. Run `get_code.sh` or `get_code.bat` to mint the start code and machine ID.
-4. Send `/start <code>` to the bot so `.telegram_user_id` is created.
-5. Start Docker with `docker compose up --build -d`.
+4. Start Docker with `docker compose up --build -d` so the service can receive Telegram updates.
+5. Send `/start <code>` to the bot in Telegram so `.telegram_user_id` is created.
