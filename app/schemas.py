@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,3 +23,15 @@ class AskPayload(BaseModel):
     question: str = Field(..., min_length=1)
     options: list[str] = Field(default_factory=list)
     mode: Literal["sync", "async"] = "sync"
+
+
+class McpConnectPayload(BaseModel):
+    server_url: str | None = Field(default=None, min_length=1)
+    health_path: str | None = Field(default=None, min_length=1)
+
+
+class McpRpcRequest(BaseModel):
+    jsonrpc: Literal["2.0"] = "2.0"
+    id: str | int | None = None
+    method: str = Field(..., min_length=1)
+    params: dict[str, Any] = Field(default_factory=dict)

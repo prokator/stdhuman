@@ -67,6 +67,23 @@ Once running, use the documented `/v1/plan`, `/v1/log`, and `/v1/ask` endpoints.
 
 `/v1/plan` always notifies Telegram and sends the numbered steps to the cached/configured user ID.
 
+## MCP connector (optional)
+
+If you want the service to maintain a lightweight connection check to an external MCP server, configure the optional MCP settings and use the `/v1/mcp/*` endpoints.
+
+Environment variables:
+
+- `MCP_SERVER_URL` (optional): Default MCP server base URL for `/v1/mcp/connect`.
+- `MCP_HEALTH_PATH` (optional): Path used to check connectivity (default `/health`).
+- `MCP_CONNECT_TIMEOUT` (optional): Timeout in seconds for the connectivity check (default `5`).
+
+Endpoints:
+
+- `GET /v1/mcp/status` returns the last connection check state.
+- `POST /v1/mcp/connect` accepts `{ "server_url": "http://host:port", "health_path": "/health" }` and stores the result.
+- `POST /v1/mcp/disconnect` clears the stored state.
+- `POST /mcp` accepts JSON-RPC 2.0 requests for `initialize`, `tools/list`, and `tools/call` (tools: `plan`, `log`, `ask`) so agents can act over MCP instead of REST.
+
 ## Telegram integration
 
 - The container polls Telegram's `getUpdates` API every few seconds, so once `.env` contains `TELEGRAM_BOT_TOKEN` and `DEV_TELEGRAM_USERNAME` you can authorize via `/start <code>`—no webhook setup is required.
@@ -80,6 +97,34 @@ Once running, use the documented `/v1/plan`, `/v1/log`, and `/v1/ask` endpoints.
 ## OpenCode usage (optional)
 
 If you use OpenCode, the `/stdhumanstart` command in `.opencode/commands/stdhumanstart.md` enforces the Telegram build loop via the StdHuman API. It is designed for short, structured status updates and blocking questions.
+
+### OpenCode MCP integration
+
+If you want OpenCode to drive StdHuman via MCP instead of REST, register this service as an MCP server pointing at `http://localhost:18081/mcp` and use the exposed tools (`plan`, `log`, `ask`). Most OpenCode MCP registries let you add a named server with a base URL; once added, the agent can call these tools directly.
+
+Quick MCP smoke checks:
+
+```bash
+curl -X POST http://localhost:18081/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+```bash
+curl -X POST http://localhost:18081/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"log","arguments":{"level":"info","message":"Hello from MCP"}}}'
+```
+
+### Other MCP clients (JetBrains, Gemini CLI, Copilot CLI)
+
+StdHuman exposes a standard MCP JSON-RPC endpoint at `http://localhost:18081/mcp`, so any MCP-capable client can connect. While the UI labels differ by product, the steps are consistent:
+
+1. Ensure StdHuman is running locally.
+2. Add a new MCP server in the client and set the server URL to `http://localhost:18081/mcp`.
+3. Refresh tools and use `plan`, `log`, and `ask` from the client.
+
+If a client requires a name or namespace, use something like `stdhuman` and keep the base URL unchanged.
 
 ## General agentic usage
 

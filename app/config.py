@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     telegram_bot_token: str
     dev_telegram_username: str
     telegram_poll_interval: float = 5.0
+    mcp_server_url: str | None = None
+    mcp_health_path: str = "/health"
+    mcp_connect_timeout: float = 5.0
 
     model_config = SettingsConfigDict(env_file=".env", extra="allow")
 
