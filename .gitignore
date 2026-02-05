@@ -1,0 +1,10 @@
+.env
+AGENTS.md
+.venv/
+.telegram_user_id
+.telegram_start_salt
+.telegram_machine_id
+__pycache__/
+*.pyc
+.pytest_cache/
+.ai/

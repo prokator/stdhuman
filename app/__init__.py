@@ -1,0 +1,1 @@
+"""StdHuman FastAPI application package."""
