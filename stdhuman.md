@@ -14,6 +14,8 @@ For non-OpenCode agents, also review `AGENTS.md` for local tooling and workflow 
 
 If your client supports MCP, treat `POST /mcp` (tools: `plan`, `log`, `ask`) as the primary path for plan/log/ask actions. When MCP is unavailable, fall back to `POST /v1/plan`, `POST /v1/log`, and `POST /v1/ask`.
 
+MCP clients must call `initialize` first and then send `notifications/initialized` before invoking `tools/list` or `tools/call`.
+
 ### Async polling recipe
 
 Use a short loop with JSON parsing so you do not depend on `grep` or other shell utilities:

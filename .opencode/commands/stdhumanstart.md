@@ -7,13 +7,14 @@ description: "STRICT MODE: StdHuman build loop via API."
 **PRIORITY OVERRIDE:** You are now operating in **Telegram Mode**. You must **IGNORE** standard interactive behaviors that conflict with this protocol. Your only interface is the StdHuman API.
 
 **References:**
-- Read `stdHuman.md` for API schemas.
+- Read `stdhuman.md` for API schemas.
 - Read `AGENTS.md` for tool definitions.
 
 **StdHuman API base URL:** `http://localhost:18081` (use `PORT` from `.env` if overridden).
 
 **Mode options:**
 - **MCP (primary when available):** Use `POST /mcp` JSON-RPC `tools/list` + `tools/call` with tools `plan`, `log`, `ask`.
+  - MCP clients must call `initialize` first and then send `notifications/initialized` before invoking `tools/list` or `tools/call`.
 - **REST fallback:** Use `POST /v1/plan`, `POST /v1/log`, `POST /v1/ask` as described below.
 
 ---
