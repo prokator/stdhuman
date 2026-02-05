@@ -21,7 +21,7 @@ Before you start the container, you must generate the start code on the host. Th
     TELEGRAM_BOT_TOKEN=...
     DEV_TELEGRAM_USERNAME=@your-telegram-username
     PORT=18081
-    TIMEOUT=3600
+    TIMEOUT=900
     ```
 
     `DEV_TELEGRAM_USERNAME` is security-critical: it is the only authorized channel for bot communication and must start with `@`. The bot verifies the username from incoming messages, so the account must have a public Telegram username set. The service creates `.telegram_start_salt` on first use; the machine-specific identifier is cached in `.telegram_machine_id` once the start code is generated.
@@ -31,6 +31,7 @@ Before you start the container, you must generate the start code on the host. Th
     ```bash
     cp .env.example .env
     ```
+
 
 5. Generate the `/start` code and authorize the bot (do this before starting the container so the machine ID is stable):
    ```bash
