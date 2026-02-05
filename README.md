@@ -84,6 +84,19 @@ If you use OpenCode, the `/stdhumanstart` command in `.opencode/commands/stdhuma
 ## General agentic usage
 
 Non-OpenCode agents should follow the same plan/status/ask flow documented in `stdhuman.md` to keep communication consistent and auditable.
+All agent communication must use the plan/log/ask/finish flow via the StdHuman API as documented in [stdhuman.md](stdhuman.md).
+
+Copy/paste line for other projects' `AGENTS.md`:
+
+```
+All agent communication must use the plan/log/ask/finish flow via the StdHuman API as documented in stdhuman.md.
+```
+
+Example message string for non-OpenCode agents:
+
+```
+Plan: gather logs; Status: anonymized reports ready; Ask: continue deploy?
+```
 
 ### Security recommendations
 
