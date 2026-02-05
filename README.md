@@ -2,6 +2,15 @@
 
 Minimal FastAPI service exposing the StdHuman planning/logging/decision endpoints documented in `stdhuman.md`. The app stays lightweight so it can run on a developer workstation (x86, x64, ARM64, Apple Silicon) and includes guidance for both shell and Docker deployment.
 
+## Global step logic
+
+1. Create the Telegram bot in BotFather and copy the token (see [New bot setup](#new-bot-setup)).
+2. Set up the repo on the host (clone, pull, or sync as needed).
+3. Add `.env` with the bot token and `DEV_TELEGRAM_USERNAME` (see [Setup](#setup)).
+4. Run `get_code.sh` or `get_code.bat` to mint the start code (see [Setup](#setup)).
+5. Send `/start <code>` to authorize and create `.telegram_user_id` (see [Setup](#setup)).
+6. Start Docker with `docker compose up --build -d` (see [Setup](#setup)).
+
 ## Setup
 
 The deployment flow is strict and ordered: configure `.env`, generate a start code, then start Docker. This keeps the `.telegram_*` files stable as files (not directories) for bind mounts.
