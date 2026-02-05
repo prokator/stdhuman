@@ -67,22 +67,9 @@ Once running, use the documented `/v1/plan`, `/v1/log`, and `/v1/ask` endpoints.
 
 `/v1/plan` always notifies Telegram and sends the numbered steps to the cached/configured user ID.
 
-## MCP connector (optional)
+## MCP server (plan/log/ask)
 
-If you want the service to maintain a lightweight connection check to an external MCP server, configure the optional MCP settings and use the `/v1/mcp/*` endpoints.
-
-Environment variables:
-
-- `MCP_SERVER_URL` (optional): Default MCP server base URL for `/v1/mcp/connect`.
-- `MCP_HEALTH_PATH` (optional): Path used to check connectivity (default `/health`).
-- `MCP_CONNECT_TIMEOUT` (optional): Timeout in seconds for the connectivity check (default `5`).
-
-Endpoints:
-
-- `GET /v1/mcp/status` returns the last connection check state.
-- `POST /v1/mcp/connect` accepts `{ "server_url": "http://host:port", "health_path": "/health" }` and stores the result.
-- `POST /v1/mcp/disconnect` clears the stored state.
-- `POST /mcp` accepts JSON-RPC 2.0 requests for `initialize`, `tools/list`, and `tools/call` (tools: `plan`, `log`, `ask`) so agents can act over MCP instead of REST.
+StdHuman exposes a JSON-RPC 2.0 MCP endpoint at `POST /mcp` for the same Telegram-backed actions as the REST API. Treat MCP as the primary path for `plan`, `log`, and `ask` when available, and fall back to the REST endpoints otherwise (this does not connect to external MCP servers).
 
 ## Telegram integration
 

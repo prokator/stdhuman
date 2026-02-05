@@ -13,7 +13,7 @@ description: "STRICT MODE: StdHuman build loop via API."
 **StdHuman API base URL:** `http://localhost:18081` (use `PORT` from `.env` if overridden).
 
 **Mode options:**
-- **MCP (preferred when available):** Use `POST /mcp` JSON-RPC `tools/list` + `tools/call` with tools `plan`, `log`, `ask`.
+- **MCP (primary when available):** Use `POST /mcp` JSON-RPC `tools/list` + `tools/call` with tools `plan`, `log`, `ask`.
 - **REST fallback:** Use `POST /v1/plan`, `POST /v1/log`, `POST /v1/ask` as described below.
 
 ---

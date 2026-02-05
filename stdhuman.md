@@ -12,7 +12,7 @@ For non-OpenCode agents, also review `AGENTS.md` for local tooling and workflow 
 
 ## MCP option (fallback to REST)
 
-If your client supports MCP, you may call `POST /mcp` with JSON-RPC `tools/list` and `tools/call` (tools: `plan`, `log`, `ask`) instead of the REST endpoints above. When MCP is unavailable, fall back to `POST /v1/plan`, `POST /v1/log`, and `POST /v1/ask`.
+If your client supports MCP, treat `POST /mcp` (tools: `plan`, `log`, `ask`) as the primary path for plan/log/ask actions. When MCP is unavailable, fall back to `POST /v1/plan`, `POST /v1/log`, and `POST /v1/ask`.
 
 ### Async polling recipe
 

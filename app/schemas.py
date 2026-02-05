@@ -25,11 +25,6 @@ class AskPayload(BaseModel):
     mode: Literal["sync", "async"] = "sync"
 
 
-class McpConnectPayload(BaseModel):
-    server_url: str | None = Field(default=None, min_length=1)
-    health_path: str | None = Field(default=None, min_length=1)
-
-
 class McpRpcRequest(BaseModel):
     jsonrpc: Literal["2.0"] = "2.0"
     id: str | int | None = None

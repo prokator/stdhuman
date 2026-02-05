@@ -9,9 +9,8 @@ from fastapi import FastAPI, HTTPException, status
 
 from app.config import settings
 from app.decision import decision_coordinator
-from app.mcp import mcp_connector
 from app.mcp_server import handle_mcp_request
-from app.schemas import AskPayload, LogPayload, McpConnectPayload, McpRpcRequest, PlanPayload
+from app.schemas import AskPayload, LogPayload, McpRpcRequest, PlanPayload
 from app.state import mission_manager
 from app.telegram import (
     build_question_text,
@@ -95,37 +94,6 @@ async def define_mission(payload: PlanPayload) -> Dict[str, str]:
 @app.get("/v1/health")
 async def health_check() -> Dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/v1/mcp/status")
-async def mcp_status() -> Dict[str, str | None]:
-    connection = mcp_connector.connection
-    if connection is None:
-        return {"status": "disconnected"}
-    return connection.to_response()
-
-
-@app.post("/v1/mcp/connect")
-async def connect_mcp(payload: McpConnectPayload) -> Dict[str, str | None]:
-    server_url = payload.server_url or settings.mcp_server_url
-    if not server_url:
-        raise HTTPException(status_code=400, detail="mcp server url missing")
-    health_path = payload.health_path or settings.mcp_health_path
-    try:
-        connection = await mcp_connector.connect(
-            server_url=server_url,
-            health_path=health_path,
-            timeout_seconds=settings.mcp_connect_timeout,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return connection.to_response()
-
-
-@app.post("/v1/mcp/disconnect")
-async def disconnect_mcp() -> Dict[str, str]:
-    mcp_connector.disconnect()
-    return {"status": "disconnected"}
 
 
 @app.post("/v1/log", status_code=status.HTTP_202_ACCEPTED)
