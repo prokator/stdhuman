@@ -7,6 +7,21 @@ Base URL: `http://localhost:18081` (use `PORT` from `.env` if overridden).
 2. **Status** – call `POST /v1/log` continually with concise updates (`level` + `message`). These become the shared running log and should describe observable progress, preliminary results, blockers, or errors.
 3. **Ask** – call `POST /v1/ask` whenever a decision requires a human. Supply the `question` and all available `options`. The handler waits for a response (or times out) and returns the chosen option.
    - If you need a non-blocking flow, set `mode: "async"` and poll `GET /v1/ask/result/{request_id}` until it returns an answer.
+
+### Async polling recipe
+
+Use a short loop with JSON parsing so you do not depend on `grep` or other shell utilities:
+
+```bash
+request_id="..."
+for i in {1..60}; do
+  resp=$(curl -s "http://localhost:18081/v1/ask/result/${request_id}")
+  echo "$resp"
+  status=$(printf '%s' "$resp" | python -c "import sys,json; print('pending' if json.load(sys.stdin).get('status')=='pending' else 'done')")
+  if [ "$status" != "pending" ]; then break; fi
+  sleep 5
+done
+```
 4. **Finish** – when the mission is done, report it through `POST /v1/log` (e.g., `level: success`, `message: "Mission complete"`) and optionally post a final Telegram message through `/telegram/webhook` or the poller.
 
 ## End-of-run sync check
@@ -25,6 +40,7 @@ Always keep communications brief (~1-2 sentences) and **never** include private 
 
 `/v1/log` always notifies Telegram, so every status update is delivered to the authorized user ID. Include `step_index` to append a step-complete line.
 `/v1/plan` always notifies Telegram, sending the numbered steps to the authorized user ID.
+If the plan is not visible in Telegram, retry the call and confirm you are using the correct `PORT` from `.env`.
 Use `/v1/health` for container health checks to avoid emitting Telegram notifications.
 Telegram inbound updates are restricted to the configured chat ID so only one authorized user can interact with the bot.
 

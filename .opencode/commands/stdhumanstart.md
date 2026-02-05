@@ -21,6 +21,7 @@ You must execute the following phases sequentially. **Do not deviate.**
 1.  **Plan:** Call `POST /v1/plan` with:
     `{"project": "Start Telegram Build Session", "steps": ["Await instructions via API", "Execute", "Report"]}`.
     - This plan must be sent before any execution begins in the session.
+    - If the plan is not visible in Telegram, retry and confirm the `PORT` from `.env`.
 
 ### Phase 2: The Cycle (Repeat Until Stopped)
 Perform these 3 steps in exact order:
@@ -36,6 +37,17 @@ Perform these 3 steps in exact order:
      - `options`: ["Command", "Stop"]
      - `mode`: "async"
     - Poll `GET /v1/ask/result/{request_id}` for up to 5 minutes.
+    - Polling recipe:
+      ```bash
+      request_id="..."
+      for i in {1..60}; do
+        resp=$(curl -s "http://localhost:18081/v1/ask/result/${request_id}")
+        echo "$resp"
+        status=$(printf '%s' "$resp" | python -c "import sys,json; print('pending' if json.load(sys.stdin).get('status')=='pending' else 'done')")
+        if [ "$status" != "pending" ]; then break; fi
+        sleep 5
+      done
+      ```
     - The Telegram prompt summary includes the last status and timeout metadata, and answers should be plain text.
     - **CRITICAL:** You must WAIT for the API response. Do not invent an answer.
 

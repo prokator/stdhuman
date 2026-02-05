@@ -4,36 +4,26 @@ Minimal FastAPI service exposing the StdHuman planning/logging/decision endpoint
 
 ## Setup
 
-Before you start the container, you must generate the start code on the host. This creates the required `.telegram_*` files as files (not directories) so Docker bind mounts stay stable.
+The deployment flow is strict and ordered: configure `.env`, generate a start code, then start Docker. This keeps the `.telegram_*` files stable as files (not directories) for bind mounts.
 
-1. Ensure you are on Windows 11 (PowerShell) or any shell that can run the provided scripts.
-2. Create and activate the virtual environment:
-   ```powershell
-   python -m venv .venv
-   . .venv\Scripts\Activate.ps1
+1. Ensure you are on Windows 11 (PowerShell) or any shell that can run the provided scripts.
+2. Provide required environment variables via `.env` (recommended):
+   ```ini
+   TELEGRAM_BOT_TOKEN=...
+   DEV_TELEGRAM_USERNAME=@your-telegram-username
+   PORT=18081
+   TIMEOUT=900
    ```
-3. Install dependencies:
-   ```powershell
-   python -m pip install -r requirements.txt
+
+   `DEV_TELEGRAM_USERNAME` is security-critical: it is the only authorized channel for bot communication and must start with `@`. The bot verifies the username from incoming messages, so the account must have a public Telegram username set. The service creates `.telegram_start_salt` on first use; the machine-specific identifier is cached in `.telegram_machine_id` once the start code is generated.
+
+   Save this file as `.env` (do not commit it) so both the CLI scripts and Docker Compose can pick up the credentials automatically. You can copy the template from `.env.example` before filling in secrets:
+
+   ```bash
+   cp .env.example .env
    ```
-4. Provide required environment variables (e.g., via `.env` or your shell):
-    ```ini
-    TELEGRAM_BOT_TOKEN=...
-    DEV_TELEGRAM_USERNAME=@your-telegram-username
-    PORT=18081
-    TIMEOUT=900
-    ```
 
-    `DEV_TELEGRAM_USERNAME` is security-critical: it is the only authorized channel for bot communication and must start with `@`. The bot verifies the username from incoming messages, so the account must have a public Telegram username set. The service creates `.telegram_start_salt` on first use; the machine-specific identifier is cached in `.telegram_machine_id` once the start code is generated.
-
-    Save this file as `.env` (do not commit it) so both the CLI scripts and Docker Compose can pick up the credentials automatically. You can copy the template from `.env.example` before filling in secrets:
-
-    ```bash
-    cp .env.example .env
-    ```
-
-
-5. Generate the `/start` code and authorize the bot (do this before starting the container so the machine ID is stable):
+3. Generate the `/start` code on the host (do this before starting the container so the machine ID is stable):
    ```bash
    ./get_code.sh
    ```
@@ -42,7 +32,7 @@ Before you start the container, you must generate the start code on the host. Th
    ```
    Then send `/start <code>` to your bot in Telegram. This creates `.telegram_user_id` locally.
 
-6. Only after the start code is generated, run Docker:
+4. Start Docker only after the start code is generated:
    ```bash
    docker compose up --build -d
    ```
@@ -183,3 +173,13 @@ Every functional change must be covered by tests and validated with this command
 - Keep the implementation clean and documented for both AI tooling and human maintainers.
 - Update this README whenever functionality or deployment instructions change so it can serve as the GitHub presentation of the repo.
 - After code changes, request a container rebuild (`docker compose up --build -d`) so the running service stays aligned with the latest edits.
+
+## New bot setup
+
+When onboarding a new Telegram bot, follow this sequence before you touch Docker:
+
+1. Create a bot in BotFather and copy the token.
+2. Set `TELEGRAM_BOT_TOKEN` and `DEV_TELEGRAM_USERNAME` in `.env`.
+3. Run `get_code.sh` or `get_code.bat` to mint the start code and machine ID.
+4. Send `/start <code>` to the bot so `.telegram_user_id` is created.
+5. Start Docker with `docker compose up --build -d`.
