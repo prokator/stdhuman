@@ -19,8 +19,7 @@ services:
       - "18081:18081"
     volumes:
       - ./.telegram_user_id:/app/.telegram_user_id
-      - ./.telegram_start_salt:/app/.telegram_start_salt
-      - ./.telegram_machine_id:/app/.telegram_machine_id
+      - ./.telegram_start_code:/app/.telegram_start_code
     restart: unless-stopped
     healthcheck:
       test: [
