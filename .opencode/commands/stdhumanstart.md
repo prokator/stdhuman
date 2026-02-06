@@ -22,6 +22,11 @@ description: "STRICT MODE: StdHuman build loop via API."
 ## THE EXECUTION LOOP
 You must execute the following phases sequentially. **Do not deviate.**
 
+### Phase 0: Availability Check
+1. Call `GET /v1/health` on the StdHuman API.
+2. If the service is unavailable, exit Telegram Mode and proceed in normal mode without StdHuman API calls.
+3. Hard rule: do not call `POST /v1/plan`, `POST /v1/log`, or `POST /v1/ask` unless `/v1/health` succeeded in this phase.
+
 ### Phase 1: Initialize (Once)
 1.  **Plan:** Call `POST /v1/plan` with:
     `{"project": "Start Telegram Build Session", "steps": ["Await instructions via API", "Execute", "Report"]}`.
@@ -30,6 +35,11 @@ You must execute the following phases sequentially. **Do not deviate.**
 
 ### Phase 2: The Cycle (Repeat Until Stopped)
 Perform these 3 steps in exact order:
+
+**0. HEALTH CHECK**
+   - Call `GET /v1/health` before each cycle.
+   - If unavailable, exit Telegram Mode and proceed in normal mode without StdHuman API calls.
+   - Hard rule: do not call `POST /v1/log` or `POST /v1/ask` in this cycle unless `/v1/health` succeeded.
 
 **1. STATUS (Log)**
    - Call `POST /v1/log` reporting the result of the *previous* action (e.g., "Tests passed" or "Waiting for input").

@@ -5,9 +5,15 @@ Base URL: `http://localhost:18081` (use `PORT` from `.env` if overridden).
 
 For non-OpenCode agents, also review `AGENTS.md` for local tooling and workflow rules.
 
+## Availability check
+
+Before entering the plan/status/ask loop, call `GET /v1/health`. If the service is unavailable, skip the StdHuman API and proceed in normal mode (no Telegram-backed logging).
+Hard rule: never call `/v1/plan`, `/v1/log`, or `/v1/ask` unless `/v1/health` succeeded in the same cycle.
+
 1. **Plan** – call `POST /v1/plan` before work starts for every session, passing the human-readable project name and an ordered list of objectives/steps.
-2. **Status** – call `POST /v1/log` continually with concise updates (`level` + `message`). These become the shared running log and should describe observable progress, preliminary results, blockers, or errors.
-3. **Ask** – call `POST /v1/ask` whenever a decision requires a human. Supply the `question` and all available `options`. The handler waits for a response (or times out) and returns the chosen option.
+2. **Status** – call `POST /v1/log` continually with concise updates (`level` + `message`). These become the shared running log and should describe observable progress, preliminary results, blockers, or errors. When replying to a human question, send the response via `/v1/log` (not `/v1/ask`).
+3. **Ask** – call `POST /v1/ask` whenever a decision requires a human. The service always uses the fixed options `Command` and `Stop` in the Telegram prompt (any supplied `options` are accepted but ignored).
+   - New `/v1/ask` calls cancel any currently pending decision before creating the next prompt.
    - If you need a non-blocking flow, set `mode: "async"` and poll `GET /v1/ask/result/{request_id}` until it returns an answer.
 
 ## MCP option (fallback to REST)
@@ -42,7 +48,7 @@ When a question is sent, reply in Telegram with plain text to resolve the pendin
 
 ## Telegram authorization
 
-Telegram access is restricted to a single user. Set `DEV_TELEGRAM_USERNAME` (must start with `@`) in `.env` and ensure the account has a public Telegram username. Generate a start code via `get_code.sh`/`get_code.bat` before starting the container (to seed `.telegram_machine_id`), and authorize with `/start <code>` to seed `.telegram_user_id`.
+Telegram access is restricted to a single user. Set `DEV_TELEGRAM_USERNAME` (must start with `@`) in `.env` and ensure the account has a public Telegram username. Generate a start code via `get_code.sh`/`get_code.bat` (it writes `.telegram_start_code`); the code is 12 characters (letters, numbers, `-`, `_`). If the start code file is missing or invalid, the service will generate a new code on startup. Authorize with `/start <code>` to seed `.telegram_user_id`.
 
 Always keep communications brief (~1-2 sentences) and **never** include private data like credentials, code listings, stack traces, or other secrets. Treat this document as the single source for communication etiquette.
 

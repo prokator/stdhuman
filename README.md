@@ -2,18 +2,20 @@
 
 Minimal FastAPI service exposing the StdHuman planning/logging/decision endpoints documented in `stdhuman.md`. The app stays lightweight so it can run on a developer workstation (x86, x64, ARM64, Apple Silicon) and includes guidance for both shell and Docker deployment.
 
+If you want a smoother operator experience, start with OpenCode: it can drive StdHuman directly and also bridge to multiple platforms via MCP integrations (for example JetBrains, Gemini CLI, or Copilot CLI).
+
 ## Global step logic
 
 1. Create the Telegram bot in BotFather and copy the token (see [New bot setup](#new-bot-setup)).
 2. Set up the repo on the host (clone, pull, or sync as needed).
 3. Add `.env` with the bot token and `DEV_TELEGRAM_USERNAME` (see [Setup](#setup)).
-4. Run `get_code.sh` or `get_code.bat` to mint the start code (see [Setup](#setup)).
+4. Run `get_code.sh` or `get_code.bat` to mint/show the start code (recommended; see [Setup](#setup)).
 5. Start Docker with `docker compose up --build -d` (see [Setup](#setup)).
 6. Send `/start <code>` to the bot in Telegram (not the CLI) so the running service can capture `.telegram_user_id` (see [Setup](#setup)).
 
 ## Setup
 
-The deployment flow is strict and ordered: configure `.env`, generate a start code, then start Docker. This keeps the `.telegram_*` files stable as files (not directories) for bind mounts.
+The deployment flow is ordered: configure `.env`, generate/show a start code (recommended), then start Docker. This keeps the `.telegram_*` files stable as files (not directories) for bind mounts.
 
 1. Ensure you are on Windows 11 (PowerShell) or any shell that can run the provided scripts.
 2. Provide required environment variables via `.env` (recommended):
@@ -24,7 +26,7 @@ The deployment flow is strict and ordered: configure `.env`, generate a start co
    TIMEOUT=900
    ```
 
-   `DEV_TELEGRAM_USERNAME` is security-critical: it is the only authorized channel for bot communication and must start with `@`. The bot verifies the username from incoming messages, so the account must have a public Telegram username set. The service creates `.telegram_start_salt` on first use; the machine-specific identifier is cached in `.telegram_machine_id` once the start code is generated.
+   `DEV_TELEGRAM_USERNAME` is security-critical: it is the only authorized channel for bot communication and must start with `@`. The bot verifies the username from incoming messages, so the account must have a public Telegram username set. The service stores the numeric start code in `.telegram_start_code` once generated.
 
    Save this file as `.env` (do not commit it) so both the CLI scripts and Docker Compose can pick up the credentials automatically. You can copy the template from `.env.example` before filling in secrets:
 
@@ -32,13 +34,15 @@ The deployment flow is strict and ordered: configure `.env`, generate a start co
    cp .env.example .env
    ```
 
-3. Generate the `/start` code on the host (do this before starting the container so the machine ID is stable):
+3. Generate the `/start` code on the host (recommended before starting the container so the code is ready and visible):
    ```bash
    ./get_code.sh
    ```
    ```powershell
    get_code.bat
    ```
+   The script prints `/start <code>` where `<code>` is a 12-character string (letters, numbers, `-`, `_`).
+   If `.telegram_start_code` is missing or invalid, the service will generate a new code on startup; run the script to print it explicitly before `docker compose up --build -d`.
 4. Start Docker so the service can receive Telegram updates:
    ```bash
    docker compose up --build -d
@@ -69,17 +73,23 @@ Once running, use the documented `/v1/plan`, `/v1/log`, and `/v1/ask` endpoints.
 
 ## MCP server (plan/log/ask)
 
-StdHuman exposes a JSON-RPC 2.0 MCP endpoint at `POST /mcp` for the same Telegram-backed actions as the REST API. Treat MCP as the primary path for `plan`, `log`, and `ask` when available, and fall back to the REST endpoints otherwise (this does not connect to external MCP servers).
+StdHuman exposes a JSON-RPC 2.0 MCP endpoint at `POST /mcp` for the same Telegram-backed actions as the REST API. Treat MCP as the primary path for `plan`, `log`, and `ask` when available, and fall back to the REST endpoints otherwise (this does not connect to external MCP servers). The MCP endpoint follows the Streamable HTTP transport: POST requests may return either JSON or an SSE stream, and notifications/responses return 202 Accepted with no body.
+The same endpoint also accepts `GET /mcp` with `Accept: text/event-stream` to open a server-to-client SSE stream.
+The server accepts MCP protocol versions `2024-11-05`, `2025-03-26`, and `2025-06-18`. Origins are restricted to localhost, but `Origin: null` is allowed for local, non-browser clients.
+Use `GET /mcp?once=1` to emit a single keep-alive line for smoke tests without holding an infinite stream open.
+Clients should call `initialize` first and then send `notifications/initialized` before invoking tools.
 
 ## Telegram integration
 
 - The container polls Telegram's `getUpdates` API every few seconds, so once `.env` contains `TELEGRAM_BOT_TOKEN` and `DEV_TELEGRAM_USERNAME` you can authorize via `/start <code>`—no webhook setup is required.
 - Incoming Telegram updates are restricted to the stored `.telegram_user_id`, so only the authorized user can interact with the bot.
 - Successful `/start <code>` stores the numeric user ID in `.telegram_user_id`; the Compose file bind-mounts this file so it persists between host and container.
-- The service creates `.telegram_start_salt` on first use to keep the start code stable across restarts.
+- The service stores the start code in `.telegram_start_code` so it stays stable across restarts.
 - The `/telegram/webhook` endpoint remains available for developers who prefer to route updates directly.
 - When `/v1/ask` is called, the service posts a Telegram prompt that includes a summary line (no separate question block) with the last status + timeout metadata and the fixed options `Command` and `Stop`. Respond with plain text in Telegram to resolve the pending decision.
 - If you want a non-blocking flow, call `/v1/ask` with `mode: "async"` and then poll `/v1/ask/result/{request_id}` until it returns an answer.
+- New `/v1/ask` calls cancel any currently pending decision before creating the next prompt.
+- For sync questions, you may pass `timeout` (seconds) in the `/v1/ask` body to override the default server timeout.
 
 ## OpenCode usage (optional)
 
@@ -93,8 +103,16 @@ Quick MCP smoke checks:
 
 ```bash
 curl -X POST http://localhost:18081/mcp \
+  -H "Accept: application/json, text/event-stream" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+```bash
+curl -X POST "http://localhost:18081/mcp?transport=sse" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
 ```
 
 ```bash
@@ -117,6 +135,9 @@ If a client requires a name or namespace, use something like `stdhuman` and keep
 
 Non-OpenCode agents should follow the same plan/status/ask flow documented in `stdhuman.md` to keep communication consistent and auditable.
 All agent communication must use the plan/log/ask/finish flow via the StdHuman API as documented in [stdhuman.md](stdhuman.md).
+When replying to a human question, send the response via `/v1/log`.
+Before entering the plan/status/ask loop, call `GET /v1/health`; if the service is unavailable, proceed in normal mode without StdHuman API calls.
+Hard rule: never call `/v1/plan`, `/v1/log`, or `/v1/ask` unless `/v1/health` succeeded in the same cycle.
 
 Copy/paste line for other projects' `AGENTS.md`:
 
@@ -135,6 +156,7 @@ Plan: gather logs; Status: anonymized reports ready; Ask: continue deploy?
 - Keep the bot username private and only share direct links with trusted users.
 - Always set `DEV_TELEGRAM_USERNAME` in `.env`; this is the one and only authorized communication channel.
 - Use `/start <code>` to authorize the bot. Generate the code locally with `get_code.sh` or `get_code.bat`.
+- No default password is shipped; access requires the generated start code plus the authorized Telegram username.
 
 ### BotFather command config (optional)
 
@@ -225,8 +247,10 @@ Every functional change must be covered by tests and validated with this command
 - All functional code is backed by automated tests, and they must pass before builds are declared complete.
 - Security-first mindset: validate inputs (via Pydantic models), avoid default credentials, and never commit secrets.
 - Keep the implementation clean and documented for both AI tooling and human maintainers.
+- Keep `.gitignore` aligned with tracked content so runtime `.telegram_start_code` and `.telegram_user_id` stay ignored while documentation remains discoverable.
 - Update this README whenever functionality or deployment instructions change so it can serve as the GitHub presentation of the repo.
 - After code changes, request a container rebuild (`docker compose up --build -d`) so the running service stays aligned with the latest edits.
+- When running local commands, prefer the `.venv` Python interpreter if it exists and use `ls -a` to confirm hidden files like `.env` and `.venv` are present.
 
 ## New bot setup
 
@@ -234,6 +258,6 @@ When onboarding a new Telegram bot, follow this sequence before you touch Docker
 
 1. Create a bot in BotFather and copy the token.
 2. Set `TELEGRAM_BOT_TOKEN` and `DEV_TELEGRAM_USERNAME` in `.env`.
-3. Run `get_code.sh` or `get_code.bat` to mint the start code and machine ID.
+3. Run `get_code.sh` or `get_code.bat` to mint/show the start code (recommended).
 4. Start Docker with `docker compose up --build -d` so the service can receive Telegram updates.
 5. Send `/start <code>` to the bot in Telegram so `.telegram_user_id` is created.
