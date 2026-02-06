@@ -23,6 +23,7 @@ class AskPayload(BaseModel):
     question: str = Field(..., min_length=1)
     options: list[str] = Field(default_factory=list)
     mode: Literal["sync", "async"] = "sync"
+    timeout: float | None = Field(default=None, gt=0)
 
 
 class McpRpcRequest(BaseModel):

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from typing import Any, Dict
+from typing import Any, AsyncGenerator, Dict
+from urllib.parse import urlparse
 
 from contextlib import suppress
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi.responses import StreamingResponse
 
 from app.config import settings
 from app.decision import decision_coordinator
-from app.mcp_server import handle_mcp_request
+from app.mcp_server import SUPPORTED_PROTOCOL_VERSIONS, handle_mcp_request, mcp_lifecycle
 from app.schemas import AskPayload, LogPayload, McpRpcRequest, PlanPayload
+from app.start_code import ensure_start_code_present
 from app.state import mission_manager
 from app.telegram import (
     build_question_text,
@@ -55,6 +59,7 @@ def build_question_summary(question: str, options: list[str]) -> str:
 
 @app.on_event("startup")
 async def start_telegram_poller() -> None:
+    ensure_start_code_present()
     if settings.telegram_bot_token:
         task = asyncio.create_task(poll_updates())
         app.state.telegram_poller = task
@@ -121,12 +126,16 @@ async def report_status(payload: LogPayload) -> None:
 @app.post("/v1/ask")
 async def human_decision(payload: AskPayload) -> Dict[str, str]:
     logger.info("Awaiting human decision: %s", payload.question)
+    if decision_coordinator.has_pending():
+        await decision_coordinator.cancel_pending()
     options = normalize_question_options()
     summary = build_question_summary(payload.question, options)
     if payload.mode == "async":
-        if decision_coordinator.has_pending():
-            raise HTTPException(status_code=409, detail="pending decision already exists")
-        request_id = await decision_coordinator.create_pending(payload.question, options)
+        try:
+            request_id = await decision_coordinator.create_pending(payload.question, options)
+        except RuntimeError:
+            await decision_coordinator.cancel_pending()
+            request_id = await decision_coordinator.create_pending(payload.question, options)
         chat_id = resolve_delivery_user_id()
         if chat_id:
             prompt = build_question_text(summary, options)
@@ -144,7 +153,8 @@ async def human_decision(payload: AskPayload) -> Dict[str, str]:
             await decision_coordinator.cancel_pending()
             raise HTTPException(status_code=502, detail="telegram send failed")
     try:
-        answer = await decision_coordinator.request_decision(payload.question, options, settings.timeout)
+        timeout = payload.timeout if payload.timeout is not None else settings.timeout
+        answer = await decision_coordinator.request_decision(payload.question, options, timeout)
         logger.info("Human decision received: %s", answer)
         return {"answer": answer}
     except asyncio.TimeoutError:
@@ -198,6 +208,110 @@ async def telegram_webhook(payload: dict) -> dict:
     return {"ok": True}
 
 
-@app.post("/mcp")
-async def mcp_entry(payload: McpRpcRequest) -> Dict[str, Any]:
-    return await handle_mcp_request(payload, define_mission, report_status, human_decision)
+@app.post("/mcp", response_model=None)
+async def mcp_entry(request: Request) -> Response | Dict[str, Any] | StreamingResponse:
+    _validate_mcp_headers(request)
+    payload = await _load_mcp_payload(request)
+    if _is_jsonrpc_response(payload) or _is_jsonrpc_notification(payload):
+        if payload.get("method") == "notifications/initialized":
+            await mcp_lifecycle.mark_ready()
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    response_payload = await handle_mcp_request(
+        McpRpcRequest.model_validate(payload),
+        define_mission,
+        report_status,
+        human_decision,
+    )
+    if _wants_mcp_sse(request):
+        async def event_stream() -> AsyncGenerator[str, None]:
+            data = json.dumps(response_payload, ensure_ascii=True)
+            yield f"data: {data}\n\n"
+
+        headers = {
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+        return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+    return response_payload
+
+
+@app.get("/mcp", response_model=None)
+async def mcp_stream(request: Request) -> Response:
+    _validate_mcp_headers(request)
+    accept = request.headers.get("accept", "")
+    if "text/event-stream" not in accept.lower():
+        return Response(status_code=status.HTTP_405_METHOD_NOT_ALLOWED)
+    once_flag = request.query_params.get("once")
+    if once_flag and once_flag.lower() in {"1", "true", "yes"}:
+        async def event_stream() -> AsyncGenerator[str, None]:
+            yield ": keep-alive\n\n"
+        headers = {
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+        return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+    async def event_stream() -> AsyncGenerator[str, None]:
+        while True:
+            yield ": keep-alive\n\n"
+            await asyncio.sleep(15)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+
+def _wants_mcp_sse(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    if "text/event-stream" in accept.lower():
+        return True
+    transport = request.query_params.get("transport")
+    if transport and transport.lower() == "sse":
+        return True
+    sse_flag = request.query_params.get("sse")
+    if sse_flag and sse_flag.lower() in {"1", "true", "yes"}:
+        return True
+    return False
+
+
+def _validate_mcp_headers(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if origin and not _is_allowed_origin(origin):
+        raise HTTPException(status_code=403, detail="origin not allowed")
+    protocol_version = request.headers.get("mcp-protocol-version")
+    if protocol_version and protocol_version not in set(SUPPORTED_PROTOCOL_VERSIONS):
+        raise HTTPException(status_code=400, detail="unsupported MCP protocol version")
+
+
+def _is_allowed_origin(origin: str) -> bool:
+    if origin.strip().lower() == "null":
+        return True
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").lower()
+    return host in {"localhost", "127.0.0.1"}
+
+
+async def _load_mcp_payload(request: Request) -> dict[str, Any]:
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid JSON body") from exc
+    if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":
+        raise HTTPException(status_code=400, detail="invalid JSON-RPC payload")
+    return payload
+
+
+def _is_jsonrpc_notification(payload: dict[str, Any]) -> bool:
+    return "method" in payload and payload.get("id") is None
+
+
+def _is_jsonrpc_response(payload: dict[str, Any]) -> bool:
+    if "method" in payload:
+        return False
+    if "id" not in payload:
+        return False
+    return "result" in payload or "error" in payload

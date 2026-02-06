@@ -16,10 +16,6 @@ class DecisionCoordinator:
         self._answer: Optional[str] = None
 
     @property
-    def pending_question(self) -> Optional[str]:
-        return self._question
-
-    @property
     def pending_options(self) -> List[str]:
         return self._options.copy()
 
@@ -41,7 +37,7 @@ class DecisionCoordinator:
             self._answer = None
             return self._request_id
 
-    async def request_decision(self, question: str, options: Iterable[str], timeout: int) -> str:
+    async def request_decision(self, question: str, options: Iterable[str], timeout: float) -> str:
         request_id = await self.create_pending(question, options)
         async with self._lock:
             future = self._future
