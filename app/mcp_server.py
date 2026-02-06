@@ -46,7 +46,7 @@ mcp_lifecycle = McpLifecycleState()
 def build_tool_definitions() -> list[dict[str, Any]]:
     return [
         {
-            "name": "plan",
+            "name": "stdhuman.plan",
             "description": "Create a mission plan and notify Telegram.",
             "inputSchema": {
                 "type": "object",
@@ -58,7 +58,7 @@ def build_tool_definitions() -> list[dict[str, Any]]:
             },
         },
         {
-            "name": "log",
+            "name": "stdhuman.log",
             "description": "Send a status update and optional step completion.",
             "inputSchema": {
                 "type": "object",
@@ -71,14 +71,13 @@ def build_tool_definitions() -> list[dict[str, Any]]:
             },
         },
         {
-            "name": "ask",
-            "description": "Request a human decision via Telegram.",
+            "name": "stdhuman.ask",
+            "description": "Request a human decision via Telegram (blocking).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "question": {"type": "string"},
                     "options": {"type": "array", "items": {"type": "string"}},
-                    "mode": {"type": "string"},
                     "timeout": {"type": "number"},
                 },
                 "required": ["question"],
@@ -145,19 +144,25 @@ async def handle_mcp_request(
 
     tool_name = payload.params.get("name")
     arguments = payload.params.get("arguments") or {}
-    if tool_name not in {"plan", "log", "ask"}:
+    if tool_name not in {
+        "stdhuman.plan",
+        "stdhuman.log",
+        "stdhuman.ask",
+    }:
         return _error(payload.id, -32602, "Unknown tool")
 
     try:
-        if tool_name == "plan":
+        if tool_name == "stdhuman.plan":
             result = await plan_handler(PlanPayload(**arguments))
             return _response(payload.id, _tool_success({"mission_id": result.get("mission_id")}))
 
-        if tool_name == "log":
+        if tool_name == "stdhuman.log":
             await log_handler(LogPayload(**arguments))
             return _response(payload.id, _tool_success({"status": "logged"}))
 
         result = await ask_handler(AskPayload(**arguments))
+        if "answer" in result and "status" not in result:
+            result = {"status": "done", "answer": result["answer"]}
         return _response(payload.id, _tool_success(result))
     except ValidationError as exc:
         return _error(payload.id, -32602, "Invalid params", exc.errors())

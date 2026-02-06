@@ -67,17 +67,39 @@ Or invoke Uvicorn directly binding only to localhost (the default port is 18081 
 uvicorn app.main:app --host 127.0.0.1 --port ${PORT:-18081}
 ```
 
-Once running, use the documented `/v1/plan`, `/v1/log`, and `/v1/ask` endpoints. The human decision endpoint blocks until the decision is resolved or the configured `TIMEOUT` elapses. In this prototype the resolution is triggered programmatically through `app.decision.decision_coordinator.resolve(answer)` (tests hook into it directly), but future integrations can push answers via Telegram or another UX targeting that coordinator.
+Once running, use MCP (`POST /mcp`, tools `stdhuman.plan`, `stdhuman.log`, `stdhuman.ask`) as the primary interface. Fall back to `/v1/plan`, `/v1/log`, and `/v1/ask` only when MCP is not connected. The human decision endpoint blocks until the decision is resolved or the configured `TIMEOUT` elapses. In this prototype the resolution is triggered programmatically through `app.decision.decision_coordinator.resolve(answer)` (tests hook into it directly), but future integrations can push answers via Telegram or another UX targeting that coordinator.
 
-`/v1/plan` always notifies Telegram and sends the numbered steps to the cached/configured user ID.
+MCP `stdhuman.plan` always notifies Telegram and sends the numbered steps to the cached/configured user ID (REST `/v1/plan` fallback only if MCP is not connected).
 
-## MCP server (plan/log/ask)
+## MCP server (stdhuman.plan/log/ask)
 
-StdHuman exposes a JSON-RPC 2.0 MCP endpoint at `POST /mcp` for the same Telegram-backed actions as the REST API. Treat MCP as the primary path for `plan`, `log`, and `ask` when available, and fall back to the REST endpoints otherwise (this does not connect to external MCP servers). The MCP endpoint follows the Streamable HTTP transport: POST requests may return either JSON or an SSE stream, and notifications/responses return 202 Accepted with no body.
+StdHuman exposes a JSON-RPC 2.0 MCP endpoint at `POST /mcp` for the same Telegram-backed actions as the REST API. Treat MCP as the primary path for `stdhuman.plan`, `stdhuman.log`, and `stdhuman.ask`, and fall back to the REST endpoints only when MCP is not connected (this does not connect to external MCP servers). The MCP endpoint follows the Streamable HTTP transport: POST requests may return either JSON or an SSE stream, and notifications/responses return 202 Accepted with no body.
 The same endpoint also accepts `GET /mcp` with `Accept: text/event-stream` to open a server-to-client SSE stream.
 The server accepts MCP protocol versions `2024-11-05`, `2025-03-26`, and `2025-06-18`. Origins are restricted to localhost, but `Origin: null` is allowed for local, non-browser clients.
 Use `GET /mcp?once=1` to emit a single keep-alive line for smoke tests without holding an infinite stream open.
 Clients should call `initialize` first and then send `notifications/initialized` before invoking tools.
+
+### Avoiding timeouts
+
+- `stdhuman.ask` is synchronous; a single tools/call returns the answer or a timeout. Ensure the MCP client timeout exceeds the requested `timeout`.
+
+### Health checks and validation
+
+- If MCP is connected and `stdhuman.*` tools are available, do not call REST endpoints or `/v1/health`.
+- Use actual MCP or REST responses (status + payload) as the primary validation that the service is available.
+- Only call `/v1/health` when MCP is unavailable and you need to validate REST fallback availability.
+
+### Availability decision flow
+
+Use this order when you need to confirm StdHuman availability:
+
+1. Call MCP `tools/list` and check whether any `stdhuman.*` tools are present.
+2. If `stdhuman.*` tools are present, use MCP and do not call REST or `/v1/health`.
+3. If `stdhuman.*` tools are missing, call `GET /v1/health` to confirm the service.
+4. If `/v1/health` succeeds, use REST fallback (`/v1/plan`, `/v1/log`, `/v1/ask`).
+5. If `/v1/health` fails, do not use StdHuman API unless a task explicitly requires it.
+
+Explicit recheck options: run the `/stdhumanstart` command, or ask for a text recheck such as "recheck StdHuman API availability".
 
 ## Telegram integration
 
@@ -86,18 +108,17 @@ Clients should call `initialize` first and then send `notifications/initialized`
 - Successful `/start <code>` stores the numeric user ID in `.telegram_user_id`; the Compose file bind-mounts this file so it persists between host and container.
 - The service stores the start code in `.telegram_start_code` so it stays stable across restarts.
 - The `/telegram/webhook` endpoint remains available for developers who prefer to route updates directly.
-- When `/v1/ask` is called, the service posts a Telegram prompt that includes a summary line (no separate question block) with the last status + timeout metadata and the fixed options `Command` and `Stop`. Respond with plain text in Telegram to resolve the pending decision.
-- If you want a non-blocking flow, call `/v1/ask` with `mode: "async"` and then poll `/v1/ask/result/{request_id}` until it returns an answer.
-- New `/v1/ask` calls cancel any currently pending decision before creating the next prompt.
-- For sync questions, you may pass `timeout` (seconds) in the `/v1/ask` body to override the default server timeout.
+- When MCP `stdhuman.ask` is called, the service posts a Telegram prompt that includes a summary line (no separate question block) with the last status + timeout metadata and the fixed options `Command` and `Stop`. Respond with plain text in Telegram to resolve the pending decision.
+- New `stdhuman.ask` calls cancel any currently pending decision before creating the next prompt (REST `/v1/ask` behaves the same in fallback mode).
+- For sync questions, you may pass `timeout` (seconds) in the MCP `stdhuman.ask` arguments to override the default server timeout (REST `/v1/ask` fallback only if MCP is not connected).
 
 ## OpenCode usage (optional)
 
-If you use OpenCode, the `/stdhumanstart` command in `.opencode/commands/stdhumanstart.md` enforces the Telegram build loop via the StdHuman API. It is designed for short, structured status updates and blocking questions.
+If you use OpenCode, the `/stdhumanstart` command in `.opencode/commands/stdhumanstart.md` enforces the Telegram build loop via MCP first (REST fallback only if MCP is not connected). It is designed for short, structured status updates and blocking questions.
 
 ### OpenCode MCP integration
 
-If you want OpenCode to drive StdHuman via MCP instead of REST, register this service as an MCP server pointing at `http://localhost:18081/mcp` and use the exposed tools (`plan`, `log`, `ask`). Most OpenCode MCP registries let you add a named server with a base URL; once added, the agent can call these tools directly.
+OpenCode can drive StdHuman via MCP by registering this service as an MCP server pointing at `http://localhost:18081/mcp` and using the exposed tools (`stdhuman.plan`, `stdhuman.log`, `stdhuman.ask`). Most OpenCode MCP registries let you add a named server with a base URL; once added, the agent can call these tools directly.
 
 Quick MCP smoke checks:
 
@@ -118,7 +139,7 @@ curl -X POST "http://localhost:18081/mcp?transport=sse" \
 ```bash
 curl -X POST http://localhost:18081/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"log","arguments":{"level":"info","message":"Hello from MCP"}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"stdhuman.log","arguments":{"level":"info","message":"Hello from MCP"}}}'
 ```
 
 ### Other MCP clients (JetBrains, Gemini CLI, Copilot CLI)
@@ -127,22 +148,26 @@ StdHuman exposes a standard MCP JSON-RPC endpoint at `http://localhost:18081/mcp
 
 1. Ensure StdHuman is running locally.
 2. Add a new MCP server in the client and set the server URL to `http://localhost:18081/mcp`.
-3. Refresh tools and use `plan`, `log`, and `ask` from the client.
+3. Refresh tools and use `stdhuman.plan`, `stdhuman.log`, and `stdhuman.ask` from the client.
 
 If a client requires a name or namespace, use something like `stdhuman` and keep the base URL unchanged.
 
 ## General agentic usage
 
 Non-OpenCode agents should follow the same plan/status/ask flow documented in `stdhuman.md` to keep communication consistent and auditable.
-All agent communication must use the plan/log/ask/finish flow via the StdHuman API as documented in [stdhuman.md](stdhuman.md).
-When replying to a human question, send the response via `/v1/log`.
+All agent communication must use the plan/log/ask/finish flow via MCP as documented in [stdhuman.md](stdhuman.md). Fall back to REST only when MCP is not connected.
+When replying to a human question, send the response via MCP `stdhuman.log` (REST `/v1/log` fallback).
 Before entering the plan/status/ask loop, call `GET /v1/health`; if the service is unavailable, proceed in normal mode without StdHuman API calls.
-Hard rule: never call `/v1/plan`, `/v1/log`, or `/v1/ask` unless `/v1/health` succeeded in the same cycle.
+Hard rule: never call MCP tools (`stdhuman.plan`, `stdhuman.log`, `stdhuman.ask`) or REST (`/v1/plan`, `/v1/log`, `/v1/ask`) unless `/v1/health` succeeded in the same session cycle.
+
+## Agent template starter
+
+The `ai_template/` folder provides a project-agnostic starter set of agent configuration files (including a generic `AGENTS.md` and `.ai/` placeholders) you can copy into new repositories.
 
 Copy/paste line for other projects' `AGENTS.md`:
 
 ```
-All agent communication must use the plan/log/ask/finish flow via the StdHuman API as documented in stdhuman.md.
+All agent communication must use the plan/log/ask/finish flow via MCP as documented in stdhuman.md (REST fallback only if MCP is not connected).
 ```
 
 Example message string for non-OpenCode agents:
@@ -164,19 +189,19 @@ Plan: gather logs; Status: anonymized reports ready; Ask: continue deploy?
   - `/start` – authorize with a start code.
 - Keep privacy mode enabled (default) so group messages are only seen when mentioned or using commands.
 
-`/v1/log` always notifies Telegram, so every status log is sent to the authorized user ID. If you include `step_index`, the notification appends `Step N/total complete: <step>` so Telegram shows progress. Health checks use `/v1/health` to avoid spamming Telegram:
+MCP `stdhuman.log` always notifies Telegram, so every status log is sent to the authorized user ID. If you include `step_index`, the notification appends `Step N/total complete: <step>` so Telegram shows progress. Health checks use `/v1/health` to avoid spamming Telegram:
 
 ```bash
-curl -X POST http://localhost:18081/v1/log \
+curl -X POST http://localhost:18081/mcp \
   -H "Content-Type: application/json" \
-  -d '{"level":"info","message":"Build ready"}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"stdhuman.log","arguments":{"level":"info","message":"Build ready"}}}'
 ```
 
 We included `test.sh`/`test.bat` to reproduce this curl call on Linux/macOS or Windows. Run the script inside the repo while the service is running to trigger a status message.
 
 ## End-of-run sync check
 
-If you want the agent to pause and wait for human input at the end of a task, send a final `/v1/ask` with a large timeout (e.g., `TIMEOUT=3600`) so the human can answer later via Telegram. This keeps the workflow synchronous without forcing a redeploy.
+If you want the agent to pause and wait for human input at the end of a task, send a final MCP `stdhuman.ask` with a large timeout (e.g., `TIMEOUT=3600`) so the human can answer later via Telegram. Fall back to `/v1/ask` only if MCP is not connected. This keeps the workflow synchronous without forcing a redeploy.
 
 ## Agent messaging example
 
@@ -193,33 +218,28 @@ Keep every message brief and avoid embedding secrets, code, or large multi-line 
 Start a mission (sends steps to Telegram):
 
 ```bash
-curl -X POST http://localhost:18081/v1/plan \
+curl -X POST http://localhost:18081/mcp \
   -H "Content-Type: application/json" \
-  -d '{
-    "project": "StdHuman",
-    "steps": [
-      "Collect logs",
-      "Fix delivery issue",
-      "Verify via tests"
-    ]
-  }'
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"stdhuman.plan","arguments":{"project":"StdHuman","steps":["Collect logs","Fix delivery issue","Verify via tests"]}}}'
 ```
 
 Send a status update (optionally with step progress):
 
 ```bash
-curl -X POST http://localhost:18081/v1/log \
+curl -X POST http://localhost:18081/mcp \
   -H "Content-Type: application/json" \
-  -d '{"level":"info","message":"Applied fix","step_index":2}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"stdhuman.log","arguments":{"level":"info","message":"Applied fix","step_index":2}}}'
 ```
 
 Request a decision (Telegram prompt includes summary + Command/Stop options):
 
 ```bash
-curl -X POST http://localhost:18081/v1/ask \
+curl -X POST http://localhost:18081/mcp \
   -H "Content-Type: application/json" \
-  -d '{"question":"Proceed to deploy?","mode":"async"}'
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"stdhuman.ask","arguments":{"question":"Proceed to deploy?"}}}'
 ```
+
+If MCP is not connected, use the REST endpoints `/v1/plan`, `/v1/log`, and `/v1/ask` as a fallback.
 
 ## Testing
 

@@ -42,6 +42,8 @@ LOG_LEVEL_MAP: Dict[str, int] = {
 
 app = FastAPI(title=settings.project_name)
 
+MCP_SSE_KEEPALIVE_SECONDS = 15
+
 
 def resolve_delivery_user_id() -> int | None:
     return get_cached_user_id()
@@ -51,10 +53,10 @@ def normalize_question_options() -> list[str]:
     return ["Command", "Stop"]
 
 
-def build_question_summary(question: str, options: list[str]) -> str:
+def build_question_summary(question: str, options: list[str], timeout_seconds: float) -> str:
     last_status = mission_manager.current.last_status if mission_manager.current else None
     status_text = last_status or "none"
-    return f"Last status: {status_text} | Prompt: {question} | Timeout: {settings.timeout}s"
+    return f"Last status: {status_text} | Prompt: {question} | Timeout: {timeout_seconds}s"
 
 
 @app.on_event("startup")
@@ -129,22 +131,8 @@ async def human_decision(payload: AskPayload) -> Dict[str, str]:
     if decision_coordinator.has_pending():
         await decision_coordinator.cancel_pending()
     options = normalize_question_options()
-    summary = build_question_summary(payload.question, options)
-    if payload.mode == "async":
-        try:
-            request_id = await decision_coordinator.create_pending(payload.question, options)
-        except RuntimeError:
-            await decision_coordinator.cancel_pending()
-            request_id = await decision_coordinator.create_pending(payload.question, options)
-        chat_id = resolve_delivery_user_id()
-        if chat_id:
-            prompt = build_question_text(summary, options)
-            delivered = await send_bot_message(chat_id, prompt)
-            if not delivered:
-                await decision_coordinator.cancel_pending()
-                raise HTTPException(status_code=502, detail="telegram send failed")
-        return {"request_id": request_id, "status": "pending"}
-
+    timeout = payload.timeout if payload.timeout is not None else settings.timeout
+    summary = build_question_summary(payload.question, options, timeout)
     chat_id = resolve_delivery_user_id()
     if chat_id:
         prompt = build_question_text(summary, options)
@@ -153,7 +141,6 @@ async def human_decision(payload: AskPayload) -> Dict[str, str]:
             await decision_coordinator.cancel_pending()
             raise HTTPException(status_code=502, detail="telegram send failed")
     try:
-        timeout = payload.timeout if payload.timeout is not None else settings.timeout
         answer = await decision_coordinator.request_decision(payload.question, options, timeout)
         logger.info("Human decision received: %s", answer)
         return {"answer": answer}
@@ -164,16 +151,6 @@ async def human_decision(payload: AskPayload) -> Dict[str, str]:
             status_code=status.HTTP_408_REQUEST_TIMEOUT,
             detail="timeout waiting for human response",
         )
-
-
-@app.get("/v1/ask/result/{request_id}")
-async def human_decision_result(request_id: str) -> Dict[str, str]:
-    answer = await decision_coordinator.get_result(request_id)
-    if answer is None:
-        if decision_coordinator.request_id != request_id:
-            raise HTTPException(status_code=404, detail="request not found")
-        return {"status": "pending"}
-    return {"answer": answer}
 
 
 @app.post("/telegram/webhook")
@@ -216,23 +193,38 @@ async def mcp_entry(request: Request) -> Response | Dict[str, Any] | StreamingRe
         if payload.get("method") == "notifications/initialized":
             await mcp_lifecycle.mark_ready()
         return Response(status_code=status.HTTP_202_ACCEPTED)
+    mcp_request = McpRpcRequest.model_validate(payload)
+    if _wants_mcp_sse(request) and _should_stream_mcp(mcp_request):
+        task = asyncio.create_task(
+            handle_mcp_request(mcp_request, define_mission, report_status, human_decision)
+        )
 
-    response_payload = await handle_mcp_request(
-        McpRpcRequest.model_validate(payload),
-        define_mission,
-        report_status,
-        human_decision,
-    )
-    if _wants_mcp_sse(request):
         async def event_stream() -> AsyncGenerator[str, None]:
-            data = json.dumps(response_payload, ensure_ascii=True)
-            yield f"data: {data}\n\n"
+            try:
+                while True:
+                    done, _ = await asyncio.wait({task}, timeout=MCP_SSE_KEEPALIVE_SECONDS)
+                    if done:
+                        break
+                    yield ": keep-alive\n\n"
+                response_payload = await task
+                data = json.dumps(response_payload, ensure_ascii=True)
+                yield f"data: {data}\n\n"
+            except asyncio.CancelledError:
+                task.cancel()
+                raise
 
         headers = {
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         }
         return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+    response_payload = await handle_mcp_request(
+        mcp_request,
+        define_mission,
+        report_status,
+        human_decision,
+    )
     return response_payload
 
 
@@ -274,6 +266,13 @@ def _wants_mcp_sse(request: Request) -> bool:
     if sse_flag and sse_flag.lower() in {"1", "true", "yes"}:
         return True
     return False
+
+
+def _should_stream_mcp(request: McpRpcRequest) -> bool:
+    if request.method != "tools/call":
+        return True
+    tool_name = request.params.get("name")
+    return tool_name != "stdhuman.ask"
 
 
 def _validate_mcp_headers(request: Request) -> None:

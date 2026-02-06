@@ -63,12 +63,6 @@ class DecisionCoordinator:
                 return True
         return False
 
-    async def get_result(self, request_id: str) -> Optional[str]:
-        async with self._lock:
-            if request_id != self._request_id:
-                return None
-            return self._answer
-
     async def cancel_pending(self) -> None:
         async with self._lock:
             if self._future and not self._future.done():

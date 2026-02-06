@@ -70,7 +70,7 @@ async def test_mcp_tools_list():
     payload = _parse_mcp_response(response)
     tools = payload["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert {"plan", "log", "ask"}.issubset(names)
+    assert {"stdhuman.plan", "stdhuman.log", "stdhuman.ask"}.issubset(names)
 
 
 @pytest.mark.asyncio
@@ -105,7 +105,7 @@ async def test_mcp_tool_call_plan(mock_send):
                     "id": 2,
                     "method": "tools/call",
                     "params": {
-                        "name": "plan",
+                        "name": "stdhuman.plan",
                         "arguments": {"project": "Test Mission", "steps": ["step 1"]},
                     },
                 },
@@ -131,7 +131,7 @@ async def test_mcp_tool_call_log(mock_send):
                     "id": 3,
                     "method": "tools/call",
                     "params": {
-                        "name": "log",
+                        "name": "stdhuman.log",
                         "arguments": {"level": "info", "message": "Update"},
                     },
                 },
@@ -158,7 +158,7 @@ async def test_mcp_tool_call_ask(mock_send):
                         "id": 4,
                         "method": "tools/call",
                         "params": {
-                            "name": "ask",
+                            "name": "stdhuman.ask",
                             "arguments": {"question": "Proceed?", "options": ["Yes", "No"]},
                         },
                     },
@@ -172,6 +172,37 @@ async def test_mcp_tool_call_ask(mock_send):
     assert response.status_code == 200
     payload = _parse_mcp_response(response)["result"]["structuredContent"]
     assert payload["answer"] == "Yes"
+
+
+@patch("app.main.send_bot_message", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_mcp_tool_call_ask_respects_timeout(mock_send):
+    transport = ASGITransport(app=app)
+    mock_send.return_value = True
+    with patch("app.main.get_cached_user_id", return_value=123):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await _mcp_initialize(client)
+            response = await client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "stdhuman.ask",
+                        "arguments": {
+                            "question": "Proceed?",
+                            "options": ["Yes", "No"],
+                            "timeout": 0.05,
+                        },
+                    },
+                },
+                headers={"Accept": "application/json, text/event-stream"},
+            )
+    assert response.status_code == 200
+    payload = _parse_mcp_response(response)
+    assert "error" in payload
+    assert "timeout" in payload["error"]["message"]
 
 
 @pytest.mark.asyncio
